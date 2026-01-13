@@ -1,7 +1,7 @@
 <script lang="ts">
 	import AnimeLaundromat from '$lib/components/AnimeLaundromat.svelte';
-	import { onMount, onDestroy } from 'svelte';
 	import type { MachineState } from '$lib/types';
+	import { onMount, onDestroy } from 'svelte';
 
 	let imageFile: File | null = $state(null);
 	let originalImage: string | null = $state(null);
@@ -16,30 +16,29 @@
 	let machines: MachineState[] = $state([]);
 	let pollingInterval: number;
 
-	onMount(async () => {
-		// 1. Generate Session ID
+	onMount(() => {
 		sessionId = localStorage.getItem('laundry_session_id') || Math.random().toString(36).substring(7);
 		localStorage.setItem('laundry_session_id', sessionId);
 
-		// 2. Claim a Machine
-		try {
-			const res = await fetch('/api/laundry/claim', {
-				method: 'POST',
-				body: JSON.stringify({ sessionId })
-			});
-			const data = await res.json();
-			if (data.success) {
-				myMachineId = data.machineId;
-			} else {
-				errorMessage = "Laundry is full! You are in spectator mode.";
+		(async () => {
+			try {
+				const res = await fetch('/api/laundry/claim', {
+					method: 'POST',
+					body: JSON.stringify({ sessionId })
+				});
+				const data = await res.json();
+				if (data.success) {
+					myMachineId = data.machineId;
+				} else {
+					errorMessage = "Laundry is full! You are in spectator mode.";
+				}
+			} catch (e) {
+				console.error("Failed to claim machine", e);
 			}
-		} catch (e) {
-			console.error("Failed to claim machine", e);
-		}
+		})();
 
-		// 3. Start Polling
 		pollStatus();
-		pollingInterval = setInterval(pollStatus, 1000); // 1s sync
+		pollingInterval = setInterval(pollStatus, 1000);
 		
 		window.addEventListener('beforeunload', leaveMachine);
 

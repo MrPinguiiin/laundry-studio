@@ -2,12 +2,13 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import gsap from 'gsap';
-	import ClothesLine from './ClothesLine.svelte'; // New Component
+	import ClothesLine from './ClothesLine.svelte'; 
+	import type { MachineState } from '$lib/types'; 
 
 	let {
 		uploadedImage = null,
-		resultImage = null, // Deprecated in favor of machine state
-		isProcessing = false, // Deprecated
+		resultImage = null, 
+		isProcessing = false, 
 		machines = [],
 		myMachineId = null
 	}: {
@@ -21,7 +22,6 @@
 	let containerRef: HTMLDivElement;
 	let ctx: gsap.Context;
 
-	// Relative Positioning Logic: "I am always the center"
 	let centerMachine = $derived(
 		myMachineId 
 			? machines.find(m => m.id === myMachineId) 
@@ -34,11 +34,6 @@
 			: machines.find(m => m.id === 1) || machines[0]
 	);
 	
-	// Better neighbor logic:
-	// If I am 1: Center=1, Left=3, Right=2
-	// If I am 2: Center=2, Left=1, Right=3
-	// If I am 3: Center=3, Left=2, Right=1
-	// Order: 1 -> 2 -> 3 -> 1
 	
 	let orderedMachines = $derived.by(() => {
 		if (!machines.length) return [null, null, null];
@@ -99,15 +94,6 @@
 		};
 		window.addEventListener('click', debugClick);
 		
-		// TEST: Auto-trigger animation after 3s to prove it looks correct
-		/*
-		setTimeout(() => {
-			console.log("AUTO TRIGGER PREVIEW");
-			showPreview();
-		}, 3000);
-		*/
-
-		// Drum spin loop (separate from context for easy control)
 		initDrumAnimation();
 		return () => window.removeEventListener('click', debugClick);
 	});
@@ -179,29 +165,6 @@
 		});
 	}
 
-	onDestroy(() => {
-		ctx?.revert();
-		drumTween?.kill();
-	});
-
-	// Reactive Control
-	$effect(() => {
-		if (drumTween) {
-			if (isProcessing) {
-				gsap.to(drumTween, { 
-					timeScale: 1, 
-					duration: 1, 
-					onStart: () => { drumTween.play(); } 
-				});
-			} else {
-				gsap.to(drumTween, { 
-					timeScale: 0, 
-					duration: 1, 
-					onComplete: () => { drumTween.pause(); } 
-				});
-			}
-		}
-	});
 
 </script>
 
@@ -209,7 +172,6 @@
 	<!-- Atmospheric Light -->
 	<div class="spotlight"></div>
 
-	<!-- Back Button (Only in preview) -->
 	{#if isPreviewOpen}
 		<button 
 			class="back-btn" 
@@ -221,7 +183,6 @@
 	{/if}
 
 	<div class="scene-3d">
-		<!-- Move everything into a world container we can pan -->
 		<div class="world-container">
 			
 			<div class="machine-grid" class:no-pointer={isPreviewOpen}>
@@ -300,8 +261,8 @@
 								<div class="glass">
 									<div class="drum-spinner" class:spinning={centerM?.status === 'washing'}>
 										<!-- Content inside drum -->
-										{#if centerM && (centerM.resultUrl || centerM.imageUrl)}
-											<div class="image-content" style="background-image: url('{centerM.resultUrl || centerM.imageUrl}')"></div>
+										{#if (centerM && (centerM.resultUrl || centerM.imageUrl)) || (centerM?.occupantId === myMachineId && uploadedImage)}
+											<div class="image-content" style="background-image: url('{centerM?.resultUrl || centerM?.imageUrl || uploadedImage}')"></div>
 										{:else}
 											<div class="clothes">
 												<div class="cloth c1"></div>
@@ -357,7 +318,7 @@
 			<!-- Clothesline Section (To the Right) -->
 			<!-- Click to go back -->
 			<div class="drying-section" onclick={hidePreview} role="button" tabindex="0" onkeydown={(e) => e.key === 'Escape' && hidePreview()}>
-				<ClothesLine image={centerM?.resultUrl} />
+				<ClothesLine image={centerM?.resultUrl ?? null} />
 			</div>
 
 		</div>

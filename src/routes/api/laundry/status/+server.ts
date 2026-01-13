@@ -1,4 +1,3 @@
-
 import { json } from '@sveltejs/kit';
 import { laundryStore } from '$lib/server/laundryState';
 
