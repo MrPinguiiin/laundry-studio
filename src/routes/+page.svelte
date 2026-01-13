@@ -1,5 +1,7 @@
 <script lang="ts">
 	import AnimeLaundromat from '$lib/components/AnimeLaundromat.svelte';
+	import { onMount, onDestroy } from 'svelte';
+	import type { MachineState } from '$lib/types';
 
 	let imageFile: File | null = $state(null);
 	let originalImage: string | null = $state(null);
@@ -7,6 +9,71 @@
 	let isLoading = $state(false);
 	let errorMessage: string | null = $state(null);
 	let isDragging = $state(false);
+
+	// Multiplayer State
+	let sessionId = $state('');
+	let myMachineId: number | null = $state(null);
+	let machines: MachineState[] = $state([]);
+	let pollingInterval: number;
+
+	onMount(async () => {
+		// 1. Generate Session ID
+		sessionId = localStorage.getItem('laundry_session_id') || Math.random().toString(36).substring(7);
+		localStorage.setItem('laundry_session_id', sessionId);
+
+		// 2. Claim a Machine
+		try {
+			const res = await fetch('/api/laundry/claim', {
+				method: 'POST',
+				body: JSON.stringify({ sessionId })
+			});
+			const data = await res.json();
+			if (data.success) {
+				myMachineId = data.machineId;
+			} else {
+				errorMessage = "Laundry is full! You are in spectator mode.";
+			}
+		} catch (e) {
+			console.error("Failed to claim machine", e);
+		}
+
+		// 3. Start Polling
+		pollStatus();
+		pollingInterval = setInterval(pollStatus, 1000); // 1s sync
+		
+		window.addEventListener('beforeunload', leaveMachine);
+
+		return () => {
+			clearInterval(pollingInterval);
+			window.removeEventListener('beforeunload', leaveMachine);
+			leaveMachine();
+		};
+	});
+
+	async function pollStatus() {
+		try {
+			const res = await fetch('/api/laundry/status');
+			const data = await res.json();
+			machines = data.machines;
+
+			// Sync local specific state with server if needed
+			if (myMachineId) {
+				const myMachine = machines.find(m => m.id === myMachineId);
+				if (myMachine && myMachine.resultUrl && !resultImage) {
+					// Someone else finished it? Or we refreshed?
+					// Syncing result logic is complex, for now trust local flow -> server
+				}
+			}
+		} catch (e) {
+			console.error("Polling error", e);
+		}
+	}
+
+	async function leaveMachine() {
+		if (myMachineId) {
+			navigator.sendBeacon('/api/laundry/leave', JSON.stringify({ sessionId }));
+		}
+	}
 
 	function handleFileSelect(event: Event) {
 		const input = event.target as HTMLInputElement;
@@ -32,7 +99,22 @@
 		isDragging = false;
 	}
 
+	$effect(() => {
+		const handleWindowDragEnter = (e: DragEvent) => {
+			if (e.dataTransfer?.types.includes('Files')) {
+				isDragging = true;
+			}
+		};
+		window.addEventListener('dragenter', handleWindowDragEnter);
+		return () => window.removeEventListener('dragenter', handleWindowDragEnter);
+	});
+
 	function processFile(file: File) {
+		if (!myMachineId) {
+			errorMessage = "You don't have a machine! Wait for one to free up.";
+			return;
+		}
+
 		if (!file.type.startsWith('image/')) {
 			errorMessage = 'Please upload an image file';
 			return;
@@ -45,8 +127,19 @@
 		const reader = new FileReader();
 		reader.onload = (e) => {
 			originalImage = e.target?.result as string;
+			// Sync upload to server
+			updateServerState({ imageUrl: originalImage, status: 'occupied' });
 		};
 		reader.readAsDataURL(file);
+	}
+
+	async function updateServerState(data: any) {
+		if (!sessionId) return;
+		await fetch('/api/laundry/update', {
+			method: 'POST',
+			body: JSON.stringify({ sessionId, data })
+		});
+		pollStatus(); // Immediate sync
 	}
 
 	async function removeBackground() {
@@ -54,6 +147,7 @@
 
 		isLoading = true;
 		errorMessage = null;
+		updateServerState({ status: 'washing', startTime: Date.now() });
 
 		try {
 			const response = await fetch('/api/remove-background', {
@@ -68,11 +162,14 @@
 
 			if (data.success) {
 				resultImage = data.image;
+				updateServerState({ status: 'done', resultUrl: resultImage });
 			} else {
 				errorMessage = data.error || 'Failed to remove background';
+				updateServerState({ status: 'occupied' }); // Revert
 			}
 		} catch (error) {
 			errorMessage = error instanceof Error ? error.message : 'An error occurred';
+			updateServerState({ status: 'occupied' });
 		} finally {
 			isLoading = false;
 		}
@@ -92,6 +189,13 @@
 		originalImage = null;
 		resultImage = null;
 		errorMessage = null;
+		updateServerState({ 
+			status: 'idle', 
+			imageUrl: null, 
+			resultUrl: null, 
+			startTime: null 
+		});
+		// Note: We don't leave the machine, just reset its state
 	}
 </script>
 
@@ -116,6 +220,8 @@
 <!-- 2D Background Scene (AnimeJS) -->
 <div class="scene-container">
 	<AnimeLaundromat 
+		{machines}
+		{myMachineId}
 		uploadedImage={originalImage} 
 		{resultImage} 
 		isProcessing={isLoading} 
@@ -148,6 +254,8 @@
 				<span>✓</span>
 				<span>Complete</span>
 			</div>
+
+			
 		{/if}
 	</div>
 
@@ -240,12 +348,14 @@
 		width: 100vw;
 		height: 100vh;
 		z-index: 5;
-		pointer-events: all;
+		pointer-events: none; /* Default: Let clicks pass to scene */
+		transition: background 0.3s;
 	}
 
 	.drop-zone-full.dragging {
 		background: rgba(255, 136, 68, 0.1);
 		border: 2px dashed rgba(255, 136, 68, 0.5);
+		pointer-events: all; /* Enable drop target only when dragging */
 	}
 
 	.vignette {
